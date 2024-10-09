@@ -66,7 +66,7 @@ pub fn ibc_packet_receive(
     // Regardless of if our processing of this packet works we need to
     // commit an ACK to the chain. As such, we wrap all handling logic
     // in a seprate function and on error write out an error ack.
-    Ok(IbcReceiveResponse::new().add_attribute("method", "ibc_packet_receive"))
+    Ok(IbcReceiveResponse::new(make_ack_success()).add_attribute("method", "ibc_packet_receive"))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

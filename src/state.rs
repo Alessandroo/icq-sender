@@ -16,7 +16,7 @@ pub const ICQ_RESPONSES: Map<u64, QueryBalanceResponse> = Map::new("icq_response
 const NEXT_SEQUENCE_SEND: Item<u64> = Item::new("next_sequence_send");
 
 /// Example function to retrieve the next sequence number
-pub fn get_next_sequence_send(deps: &mut DepsMut) -> StdResult<u64> {
+pub fn get_next_sequence_send(deps: DepsMut) -> StdResult<u64> {
     let mut sequence = NEXT_SEQUENCE_SEND.load(deps.storage)?;
     sequence += 1;
     NEXT_SEQUENCE_SEND.save(deps.storage, &sequence)?;
