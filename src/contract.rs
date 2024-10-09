@@ -34,7 +34,7 @@ pub fn execute(
 }
 
 pub fn send_query_balance(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     msg: QueryBalanceMsg,
 ) -> Result<Response, ContractError> {
@@ -76,10 +76,10 @@ pub fn send_query_balance(
     };
 
     // Get the current sequence number from storage
-    let sequence = get_next_sequence_send(deps)?;
+    let sequence = get_next_sequence_send(&mut deps)?;
 
     // save_icq_request(deps, sequence, &query_balance_request);
-    // ICQ_REQUESTS.save(deps.storage, sequence, &query_balance_request)?;
+    ICQ_REQUESTS.save(deps.storage, sequence, &query_balance_request)?;
 
 
     Ok(Response::new()
