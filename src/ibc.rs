@@ -1,21 +1,13 @@
+use cosmwasm_std::{Binary, DepsMut, Env, from_json, IbcBasicResponse, IbcChannel, IbcChannelCloseMsg, IbcChannelConnectMsg, IbcChannelOpenMsg, IbcChannelOpenResponse, IbcOrder, IbcPacket, IbcPacketAckMsg, IbcPacketReceiveMsg, IbcPacketTimeoutMsg, IbcReceiveResponse};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{
-    from_binary, DepsMut, Env, IbcBasicResponse, IbcChannel, IbcChannelCloseMsg,
-    IbcChannelConnectMsg, IbcChannelOpenMsg, IbcChannelOpenResponse, IbcOrder, IbcPacketAckMsg,
-    IbcPacketReceiveMsg, IbcPacketTimeoutMsg, IbcReceiveResponse, StdResult,
-};
 
-use crate::{
-    ack::{make_ack_fail, make_ack_success},
-    contract::try_increment,
-    error::Never,
-    msg::IbcExecuteMsg,
-    state::{CONNECTION_COUNTS, TIMEOUT_COUNTS},
-    ContractError,
-};
+use crate::{ContractError, error::Never};
+use crate::ack::{Ack, make_ack_success};
+use crate::msg::{CosmosResponse, InterchainQueryPacketAck, QueryBalanceResponse};
+use crate::state::{CHANNEL_INFO, ChannelInfo, ICQ_RESPONSES};
 
-pub const IBC_VERSION: &str = "counter-1";
+pub const IBC_VERSION: &str = "icq-1";
 
 /// Handles the `OpenInit` and `OpenTry` parts of the IBC handshake.
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -37,12 +29,18 @@ pub fn ibc_channel_connect(
     validate_order_and_version(msg.channel(), msg.counterparty_version())?;
 
     // Initialize the count for this channel to zero.
-    let channel = msg.channel().endpoint.channel_id.clone();
-    CONNECTION_COUNTS.save(deps.storage, channel.clone(), &0)?;
+    // let channel = msg.channel().endpoint.channel_id.clone();
+    // CONNECTION_COUNTS.save(deps.storage, channel.clone(), &0)?;
 
-    Ok(IbcBasicResponse::new()
-        .add_attribute("method", "ibc_channel_connect")
-        .add_attribute("channel_id", channel))
+    let channel: IbcChannel = msg.into();
+    let info = ChannelInfo {
+        id: channel.endpoint.channel_id,
+        counterparty_endpoint: channel.counterparty_endpoint,
+        connection_id: channel.connection_id,
+    };
+    CHANNEL_INFO.save(deps.storage, &info.id, &info)?;
+
+    Ok(IbcBasicResponse::default())
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -53,7 +51,7 @@ pub fn ibc_channel_close(
 ) -> Result<IbcBasicResponse, ContractError> {
     let channel = msg.channel().endpoint.channel_id.clone();
     // Reset the state for the channel.
-    CONNECTION_COUNTS.remove(deps.storage, channel.clone());
+    CHANNEL_INFO.remove(deps.storage, &channel);
     Ok(IbcBasicResponse::new()
         .add_attribute("method", "ibc_channel_close")
         .add_attribute("channel", channel))
@@ -61,49 +59,21 @@ pub fn ibc_channel_close(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn ibc_packet_receive(
-    deps: DepsMut,
-    env: Env,
-    msg: IbcPacketReceiveMsg,
+    _deps: DepsMut,
+    _env: Env,
+    _msg: IbcPacketReceiveMsg,
 ) -> Result<IbcReceiveResponse, Never> {
     // Regardless of if our processing of this packet works we need to
     // commit an ACK to the chain. As such, we wrap all handling logic
     // in a seprate function and on error write out an error ack.
-    match do_ibc_packet_receive(deps, env, msg) {
-        Ok(response) => Ok(response),
-        Err(error) => Ok(IbcReceiveResponse::new()
-            .add_attribute("method", "ibc_packet_receive")
-            .add_attribute("error", error.to_string())
-            .set_ack(make_ack_fail(error.to_string()))),
-    }
-}
-
-pub fn do_ibc_packet_receive(
-    deps: DepsMut,
-    _env: Env,
-    msg: IbcPacketReceiveMsg,
-) -> Result<IbcReceiveResponse, ContractError> {
-    // The channel this packet is being relayed along on this chain.
-    let channel = msg.packet.dest.channel_id;
-    let msg: IbcExecuteMsg = from_binary(&msg.packet.data)?;
-
-    match msg {
-        IbcExecuteMsg::Increment {} => execute_increment(deps, channel),
-    }
-}
-
-fn execute_increment(deps: DepsMut, channel: String) -> Result<IbcReceiveResponse, ContractError> {
-    let count = try_increment(deps, channel)?;
-    Ok(IbcReceiveResponse::new()
-        .add_attribute("method", "execute_increment")
-        .add_attribute("count", count.to_string())
-        .set_ack(make_ack_success()))
+    Ok(IbcReceiveResponse::new().add_attribute("method", "ibc_packet_receive"))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn ibc_packet_ack(
-    _deps: DepsMut,
+    deps: DepsMut,
     _env: Env,
-    _ack: IbcPacketAckMsg,
+    msg: IbcPacketAckMsg,
 ) -> Result<IbcBasicResponse, ContractError> {
     // Nothing to do here. We don't keep any state about the other
     // chain, just deliver messages so nothing to update.
@@ -111,22 +81,25 @@ pub fn ibc_packet_ack(
     // If we did care about how the other chain received our message
     // we could deserialize the data field into an `Ack` and inspect
     // it.
-    Ok(IbcBasicResponse::new().add_attribute("method", "ibc_packet_ack"))
+    // Ok(IbcBasicResponse::new().add_attribute("method", "ibc_packet_ack"))
+    let icq_msg: Ack = from_json(&msg.acknowledgement.data)?;
+    match icq_msg {
+        Ack::Result(result) => on_packet_success(deps, result, msg.original_packet),
+        Ack::Error(error) => Ok(IbcBasicResponse::new()
+            // .set_ack(make_ack_fail(error.to_string()))
+            .add_attribute("method", "ibc_packet_ack")
+            .add_attribute("error", error.to_string())
+            .add_attribute("sequence", msg.original_packet.sequence.to_string())
+            ),
+    }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn ibc_packet_timeout(
-    deps: DepsMut,
+    _deps: DepsMut,
     _env: Env,
-    msg: IbcPacketTimeoutMsg,
+    _msg: IbcPacketTimeoutMsg,
 ) -> Result<IbcBasicResponse, ContractError> {
-    TIMEOUT_COUNTS.update(
-        deps.storage,
-        // timed out packets are sent by us, so lookup based on packet
-        // source, not destination.
-        msg.packet.src.channel_id,
-        |count| -> StdResult<_> { Ok(count.unwrap_or_default() + 1) },
-    )?;
     // As with ack above, nothing to do here. If we cared about
     // keeping track of state between the two chains then we'd want to
     // respond to this likely as it means that the packet in question
@@ -142,11 +115,11 @@ pub fn validate_order_and_version(
     // property that if a message is lost the entire channel will stop
     // working until you start it again.
     if channel.order != IbcOrder::Unordered {
-        return Err(ContractError::OrderedChannel {});
+        return Err(ContractError::OnlyOrderedChannel {});
     }
 
     if channel.version != IBC_VERSION {
-        return Err(ContractError::InvalidVersion {
+        return Err(ContractError::InvalidIbcVersion {
             actual: channel.version.to_string(),
             expected: IBC_VERSION.to_string(),
         });
@@ -162,7 +135,7 @@ pub fn validate_order_and_version(
     // alright.
     if let Some(counterparty_version) = counterparty_version {
         if counterparty_version != IBC_VERSION {
-            return Err(ContractError::InvalidVersion {
+            return Err(ContractError::InvalidIbcVersion {
                 actual: counterparty_version.to_string(),
                 expected: IBC_VERSION.to_string(),
             });
@@ -170,4 +143,21 @@ pub fn validate_order_and_version(
     }
 
     Ok(())
+}
+
+// update the balance stored on this (channel, denom) index
+fn on_packet_success(deps: DepsMut, result: Binary, packet: IbcPacket) -> Result<IbcBasicResponse, ContractError> {
+    let ack_data: InterchainQueryPacketAck = from_json(result)?;
+
+    let cosmos_response: CosmosResponse = ack_data.data;
+    let responses = cosmos_response.responses;
+    let value = &responses[0].value;
+    let balance_response: QueryBalanceResponse = from_json(value)?;
+    ICQ_RESPONSES.save(deps.storage, packet.sequence, &balance_response)?;
+
+    Ok(IbcBasicResponse::new()
+        .add_attribute("method", "ibc_packet_ack")
+        .add_attribute("sequence", packet.sequence.to_string())
+        .add_attribute("amount", balance_response.balance.amount)
+        .add_attribute("denom", balance_response.balance.denom))
 }
