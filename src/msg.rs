@@ -1,7 +1,8 @@
-use cosmwasm_schema::{cw_serde, QueryResponses};
+use cosmos_sdk_proto::cosmos::base::tendermint::v1beta1::{AbciQueryRequest, AbciQueryResponse};
+use cosmwasm_schema::{cw_serde};
 use cosmwasm_schema::schemars::JsonSchema;
 use cosmwasm_schema::serde::{Deserialize, Serialize};
-use cosmwasm_std::{Binary, Coin};
+use cosmwasm_std::{Binary};
 
 #[cw_serde]
 pub struct InstantiateMsg {}
@@ -19,67 +20,46 @@ pub struct QueryBalanceMsg {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryMsg {
+    AllBalances {},
+    AllErrors {},
+    LastSequence {},
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct InterchainQueryPacketData {
-    pub data: CosmosQuery,
+    pub data: Vec<u8>,
     pub memo: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+// CosmosQuery contains a list of tendermint ABCI query requests. It should be
+// used when sending queries to an SDK host chain.
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CosmosQuery {
-    pub requests: Vec<GrpcQuery>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
-pub struct GrpcQuery {
-    /// The fully qualified endpoint path used for routing.
-    /// It follows the format `/service_path/method_name`,
-    /// eg. "/cosmos.authz.v1beta1.Query/Grants"
-    pub path: String,
-    /// The expected protobuf message type (not [Any](https://protobuf.dev/programming-guides/proto3/#any)), binary encoded
-    pub data: Binary,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
-pub struct QueryBalanceRequest {
-    pub address: String,
-    pub denom: String,
+    #[prost(message, repeated, tag = "1")]
+    pub requests: Vec<AbciQueryRequest>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct InterchainQueryPacketAck {
-    pub data: CosmosResponse,
+    pub result: Binary,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct CosmosResponsePacket {
+    pub data: Binary,
+}
+
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CosmosResponse {
-    pub responses: Vec<ResponseQuery>,
+    #[prost(message, repeated, tag = "1")]
+    pub responses: Vec<AbciQueryResponse>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
-pub struct ResponseQuery {
-    pub value: Binary,
+pub struct ProtoCoin {
+    pub denom: String,
+    pub amount: String,
 }
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
-pub struct QueryBalanceResponse {
-    // balance is the balance of the coin.
-    pub balance: Coin,
-}
-
-#[cw_serde]
-#[derive(QueryResponses)]
-pub enum QueryMsg {
-    // GetCount returns the current count as a json-encoded number
-    #[returns(crate::msg::GetIcqStateResponse)]
-    IcqState {
-        sequence: u64,
-    }
-}
-
-// We define a custom struct for each query response
-#[cw_serde]
-pub struct GetIcqStateResponse {
-    pub request: QueryBalanceRequest,
-    pub response: QueryBalanceResponse,
-}
-

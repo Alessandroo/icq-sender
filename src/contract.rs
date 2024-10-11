@@ -1,11 +1,13 @@
+use cosmos_sdk_proto::cosmos::bank::v1beta1::QueryBalanceRequest;
+use cosmos_sdk_proto::cosmos::base::tendermint::v1beta1::AbciQueryRequest;
 use cosmwasm_std::{Binary, Deps, DepsMut, Env, IbcMsg, MessageInfo, Response, StdResult, to_json_binary};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cw2::set_contract_version;
-
+use prost::Message;
 use crate::error::ContractError;
-use crate::msg::{CosmosQuery, ExecuteMsg, GetIcqStateResponse, GrpcQuery, InstantiateMsg, InterchainQueryPacketData, QueryBalanceMsg, QueryBalanceRequest, QueryMsg};
-use crate::state::{CHANNEL_INFO, get_next_sequence_send, ICQ_REQUESTS, ICQ_RESPONSES};
+use crate::msg::{CosmosQuery, ExecuteMsg, InstantiateMsg, InterchainQueryPacketData, ProtoCoin, QueryBalanceMsg, QueryMsg};
+use crate::state::{CHANNEL_INFO, ICQ_ERRORS, ICQ_RESPONSES, LAST_SEQUENCE_ACKNOWLEDGMENT};
 
 const CONTRACT_NAME: &str = "crates.io:cw-ibc-example";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,7 +36,7 @@ pub fn execute(
 }
 
 pub fn send_query_balance(
-    mut deps: DepsMut,
+    deps: DepsMut,
     env: Env,
     msg: QueryBalanceMsg,
 ) -> Result<Response, ContractError> {
@@ -48,9 +50,11 @@ pub fn send_query_balance(
         denom: msg.denom,
     };
 
-    let req: GrpcQuery = GrpcQuery {
+    let req: AbciQueryRequest = AbciQueryRequest {
+        data: query_balance_request.encode_to_vec(),
         path: "/cosmos.bank.v1beta1.Query/Balance".to_string(),
-        data: to_json_binary(&query_balance_request)?,
+        height: 0,
+        prove: false,
     };
 
     let cosmos_query: CosmosQuery = CosmosQuery {
@@ -58,7 +62,7 @@ pub fn send_query_balance(
     };
 
     let packet_data: InterchainQueryPacketData = InterchainQueryPacketData {
-        data: cosmos_query.into(),
+        data: cosmos_query.encode_to_vec(),
         memo: "test icq request".to_string(),
     };
 
@@ -76,16 +80,16 @@ pub fn send_query_balance(
     };
 
     // Get the current sequence number from storage
-    let sequence = get_next_sequence_send(&mut deps)?;
+    // let sequence = get_next_sequence_send(&mut deps)?;
 
     // save_icq_request(deps, sequence, &query_balance_request);
-    ICQ_REQUESTS.save(deps.storage, sequence, &query_balance_request)?;
+    // ICQ_REQUESTS.save(deps.storage, sequence, &query_balance_request)?;
 
 
     Ok(Response::new()
         .add_attribute("method", "send_query_balance")
         .add_attribute("channel", channel_id)
-        .add_attribute("sequence", sequence.to_string())
+        // .add_attribute("sequence", sequence.to_string())
         // outbound IBC message, where packet is then received on other chain
         .add_message(ibc_msg))
 }
@@ -93,16 +97,29 @@ pub fn send_query_balance(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::IcqState { sequence } => to_json_binary(&query_icq_state(deps, sequence)?),
+        QueryMsg::AllBalances {} => to_json_binary(&query_all_balances(deps)?),
+        QueryMsg::AllErrors {} => to_json_binary(&query_all_errors(deps)?),
+        QueryMsg::LastSequence {} => {
+            let result = LAST_SEQUENCE_ACKNOWLEDGMENT.load(deps.storage)?;
+            to_json_binary(&result)
+        }
     }
 }
 
-fn query_icq_state(deps: Deps, sequence: u64) -> StdResult<GetIcqStateResponse> {
-    let bank_query = ICQ_REQUESTS.load(deps.storage, sequence)?;
-    let query_response = ICQ_RESPONSES.load(deps.storage, sequence)?;
-    let res = GetIcqStateResponse {
-        request: bank_query,
-        response: query_response,
-    };
-    Ok(res)
+fn query_all_balances(deps: Deps) -> StdResult<Vec<(u64, ProtoCoin)>> {
+    let balances: StdResult<Vec<(u64, ProtoCoin)>> = ICQ_RESPONSES
+        .range(deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .collect();
+
+    // Convert the result to binary
+    balances
+}
+
+fn query_all_errors(deps: Deps) -> StdResult<Vec<(u64, String)>> {
+    let balances: StdResult<Vec<(u64, String)>> = ICQ_ERRORS
+        .range(deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .collect();
+
+    // Convert the result to binary
+    balances
 }

@@ -45,6 +45,8 @@ schemars = "0.8.21"
 serde = { version = "1.0.210", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.64" }
 bincode = "2.0.0-rc.3"
+prost = "0.13.3"
+cosmos-sdk-proto = { version = "0.25.0", default-features = false }
 
 [dev-dependencies]
 cw-multi-test = "2.1.1"

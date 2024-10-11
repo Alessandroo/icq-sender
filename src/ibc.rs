@@ -1,11 +1,15 @@
+use cosmos_sdk_proto::cosmos::bank::v1beta1::QueryBalanceResponse;
+use cosmos_sdk_proto::cosmos::base::tendermint::v1beta1::AbciQueryResponse;
+use cosmos_sdk_proto::cosmos::base::v1beta1::{Coin};
 use cosmwasm_std::{Binary, DepsMut, Env, from_json, IbcBasicResponse, IbcChannel, IbcChannelCloseMsg, IbcChannelConnectMsg, IbcChannelOpenMsg, IbcChannelOpenResponse, IbcOrder, IbcPacket, IbcPacketAckMsg, IbcPacketReceiveMsg, IbcPacketTimeoutMsg, IbcReceiveResponse};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
+use prost::Message;
 
 use crate::{ContractError, error::Never};
 use crate::ack::{Ack, make_ack_success};
-use crate::msg::{CosmosResponse, InterchainQueryPacketAck, QueryBalanceResponse};
-use crate::state::{CHANNEL_INFO, ChannelInfo, ICQ_RESPONSES};
+use crate::msg::{CosmosResponse, CosmosResponsePacket, InterchainQueryPacketAck, ProtoCoin};
+use crate::state::{CHANNEL_INFO, ChannelInfo, ICQ_ERRORS, ICQ_RESPONSES, LAST_SEQUENCE_ACKNOWLEDGMENT};
 
 pub const IBC_VERSION: &str = "icq-1";
 
@@ -63,9 +67,6 @@ pub fn ibc_packet_receive(
     _env: Env,
     _msg: IbcPacketReceiveMsg,
 ) -> Result<IbcReceiveResponse, Never> {
-    // Regardless of if our processing of this packet works we need to
-    // commit an ACK to the chain. As such, we wrap all handling logic
-    // in a seprate function and on error write out an error ack.
     Ok(IbcReceiveResponse::new(make_ack_success()).add_attribute("method", "ibc_packet_receive"))
 }
 
@@ -75,22 +76,19 @@ pub fn ibc_packet_ack(
     _env: Env,
     msg: IbcPacketAckMsg,
 ) -> Result<IbcBasicResponse, ContractError> {
-    // Nothing to do here. We don't keep any state about the other
-    // chain, just deliver messages so nothing to update.
-    //
-    // If we did care about how the other chain received our message
-    // we could deserialize the data field into an `Ack` and inspect
-    // it.
-    // Ok(IbcBasicResponse::new().add_attribute("method", "ibc_packet_ack"))
+    LAST_SEQUENCE_ACKNOWLEDGMENT.save(deps.storage, &msg.original_packet.sequence)?;
+
     let icq_msg: Ack = from_json(&msg.acknowledgement.data)?;
     match icq_msg {
-        Ack::Result(result) => on_packet_success(deps, result, msg.original_packet),
-        Ack::Error(error) => Ok(IbcBasicResponse::new()
-            // .set_ack(make_ack_fail(error.to_string()))
-            .add_attribute("method", "ibc_packet_ack")
-            .add_attribute("error", error.to_string())
-            .add_attribute("sequence", msg.original_packet.sequence.to_string())
-            ),
+        Ack::Result(_) => on_packet_success(deps, msg.acknowledgement.data, msg.original_packet),
+        Ack::Error(error) => {
+            ICQ_ERRORS.save(deps.storage, msg.original_packet.sequence, &error)?;
+            Ok(IbcBasicResponse::new()
+                   // .set_ack(make_ack_fail(error.to_string()))
+                   .add_attribute("method", "ibc_packet_ack")
+                   .add_attribute("error", error.to_string())
+                   .add_attribute("sequence", msg.original_packet.sequence.to_string()))
+        }
     }
 }
 
@@ -147,17 +145,34 @@ pub fn validate_order_and_version(
 
 // update the balance stored on this (channel, denom) index
 fn on_packet_success(deps: DepsMut, result: Binary, packet: IbcPacket) -> Result<IbcBasicResponse, ContractError> {
-    let ack_data: InterchainQueryPacketAck = from_json(result)?;
+    let ack_data: InterchainQueryPacketAck = from_json(&result)?;
 
-    let cosmos_response: CosmosResponse = ack_data.data;
-    let responses = cosmos_response.responses;
-    let value = &responses[0].value;
-    let balance_response: QueryBalanceResponse = from_json(value)?;
-    ICQ_RESPONSES.save(deps.storage, packet.sequence, &balance_response)?;
+    let cosmos_response: CosmosResponsePacket = from_json(&ack_data.result)?;
+
+    let query_responses: CosmosResponse = CosmosResponse::decode(cosmos_response.data.as_slice())?;
+
+    if let Some(first_response) = get_first_response_safe(&query_responses) {
+        let balance: QueryBalanceResponse = QueryBalanceResponse::decode(first_response.value.as_slice())?;
+        let cosmos_coin: Option<Coin> = balance.balance;
+
+        match cosmos_coin {
+            Some(coin) => {
+                let new_coin = ProtoCoin {
+                    amount: coin.amount,
+                    denom: coin.denom,
+                };
+                ICQ_RESPONSES.save(deps.storage, packet.sequence, &new_coin)?;
+            }
+            None => (),
+        }
+    }
 
     Ok(IbcBasicResponse::new()
         .add_attribute("method", "ibc_packet_ack")
         .add_attribute("sequence", packet.sequence.to_string())
-        .add_attribute("amount", balance_response.balance.amount)
-        .add_attribute("denom", balance_response.balance.denom))
+    )
+}
+
+fn get_first_response_safe(cosmos_response: &CosmosResponse) -> Option<&AbciQueryResponse> {
+    cosmos_response.responses.first()
 }

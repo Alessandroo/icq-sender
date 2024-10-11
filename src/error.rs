@@ -70,6 +70,12 @@ impl From<FromUtf8Error> for ContractError {
     }
 }
 
+impl From<prost::DecodeError> for ContractError {
+    fn from(_: prost::DecodeError) -> Self {
+        ContractError::Std(StdError::parse_err("ProtoCoin", "parsing Proto response"))
+    }
+}
+
 impl From<TryFromIntError> for ContractError {
     fn from(_: TryFromIntError) -> Self {
         ContractError::AmountOverflow {}
