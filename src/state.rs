@@ -9,6 +9,8 @@ pub const CHANNEL_INFO: Map<&str, ChannelInfo> = Map::new("channel_info");
 
 pub const ICQ_RESPONSES: Map<u64, ProtoCoin> = Map::new("icq_responses");
 
+pub const ICQ_PRICE_RESPONSES: Map<u64, String> = Map::new("icq_price_responses");
+
 pub const LAST_SEQUENCE_RECEIVE: Item<u64> = Item::new("last_sequence_receive");
 
 pub const ICQ_ERRORS: Map<u64, String> = Map::new("icq_errors");

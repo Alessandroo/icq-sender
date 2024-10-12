@@ -1,5 +1,6 @@
 use std::num::TryFromIntError;
 use std::string::FromUtf8Error;
+use std::time::SystemTimeError;
 use cosmwasm_std::StdError;
 use thiserror::Error;
 
@@ -67,6 +68,12 @@ pub enum ContractError {
 impl From<FromUtf8Error> for ContractError {
     fn from(_: FromUtf8Error) -> Self {
         ContractError::Std(StdError::invalid_utf8("parsing denom key"))
+    }
+}
+
+impl From<SystemTimeError> for ContractError {
+    fn from(_: SystemTimeError) -> Self {
+        ContractError::Std(StdError::serialize_err("Start Time", "Creating Start Time"))
     }
 }
 

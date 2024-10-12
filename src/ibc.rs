@@ -1,6 +1,4 @@
-use cosmos_sdk_proto::cosmos::bank::v1beta1::QueryBalanceResponse;
 use cosmos_sdk_proto::cosmos::base::tendermint::v1beta1::AbciQueryResponse;
-use cosmos_sdk_proto::cosmos::base::v1beta1::{Coin};
 use cosmwasm_std::{Binary, DepsMut, Env, from_json, IbcBasicResponse, IbcChannel, IbcChannelCloseMsg, IbcChannelConnectMsg, IbcChannelOpenMsg, IbcChannelOpenResponse, IbcOrder, IbcPacket, IbcPacketAckMsg, IbcPacketReceiveMsg, IbcPacketTimeoutMsg, IbcReceiveResponse};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -8,8 +6,8 @@ use prost::Message;
 
 use crate::{ContractError, error::Never};
 use crate::ack::{Ack, make_ack_success};
-use crate::msg::{CosmosResponse, CosmosResponsePacket, InterchainQueryPacketAck, ProtoCoin};
-use crate::state::{CHANNEL_INFO, ChannelInfo, ICQ_ERRORS, ICQ_RESPONSES, LAST_SEQUENCE_ACKNOWLEDGMENT};
+use crate::msg::{ArithmeticTwapToNowResponse, CosmosResponse, CosmosResponsePacket, InterchainQueryPacketAck};
+use crate::state::{CHANNEL_INFO, ChannelInfo, ICQ_ERRORS, ICQ_PRICE_RESPONSES, LAST_SEQUENCE_ACKNOWLEDGMENT};
 
 pub const IBC_VERSION: &str = "icq-1";
 
@@ -152,19 +150,21 @@ fn on_packet_success(deps: DepsMut, result: Binary, packet: IbcPacket) -> Result
     let query_responses: CosmosResponse = CosmosResponse::decode(cosmos_response.data.as_slice())?;
 
     if let Some(first_response) = get_first_response_safe(&query_responses) {
-        let balance: QueryBalanceResponse = QueryBalanceResponse::decode(first_response.value.as_slice())?;
-        let cosmos_coin: Option<Coin> = balance.balance;
-
-        match cosmos_coin {
-            Some(coin) => {
-                let new_coin = ProtoCoin {
-                    amount: coin.amount,
-                    denom: coin.denom,
-                };
-                ICQ_RESPONSES.save(deps.storage, packet.sequence, &new_coin)?;
-            }
-            None => (),
-        }
+        // let balance: QueryBalanceResponse = QueryBalanceResponse::decode(first_response.value.as_slice())?;
+        // let cosmos_coin: Option<Coin> = balance.balance;
+        //
+        // match cosmos_coin {
+        //     Some(coin) => {
+        //         let new_coin = ProtoCoin {
+        //             amount: coin.amount,
+        //             denom: coin.denom,
+        //         };
+        //         ICQ_RESPONSES.save(deps.storage, packet.sequence, &new_coin)?;
+        //     }
+        //     None => (),
+        // }
+        let price_response: ArithmeticTwapToNowResponse = ArithmeticTwapToNowResponse::decode(first_response.value.as_slice())?;
+        ICQ_PRICE_RESPONSES.save(deps.storage, packet.sequence, &price_response.arithmetic_twap)?;
     }
 
     Ok(IbcBasicResponse::new()
