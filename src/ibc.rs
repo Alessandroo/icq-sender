@@ -150,19 +150,6 @@ fn on_packet_success(deps: DepsMut, result: Binary, packet: IbcPacket) -> Result
     let query_responses: CosmosResponse = CosmosResponse::decode(cosmos_response.data.as_slice())?;
 
     if let Some(first_response) = get_first_response_safe(&query_responses) {
-        // let balance: QueryBalanceResponse = QueryBalanceResponse::decode(first_response.value.as_slice())?;
-        // let cosmos_coin: Option<Coin> = balance.balance;
-        //
-        // match cosmos_coin {
-        //     Some(coin) => {
-        //         let new_coin = ProtoCoin {
-        //             amount: coin.amount,
-        //             denom: coin.denom,
-        //         };
-        //         ICQ_RESPONSES.save(deps.storage, packet.sequence, &new_coin)?;
-        //     }
-        //     None => (),
-        // }
         let price_response: ArithmeticTwapToNowResponse = ArithmeticTwapToNowResponse::decode(first_response.value.as_slice())?;
         ICQ_PRICE_RESPONSES.save(deps.storage, packet.sequence, &price_response.arithmetic_twap)?;
     }

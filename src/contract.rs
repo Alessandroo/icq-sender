@@ -5,7 +5,7 @@ use cosmwasm_std::{Binary, Deps, DepsMut, Env, IbcMsg, MessageInfo, Response, St
 use cosmwasm_std::entry_point;
 use cw2::set_contract_version;
 use prost::Message;
-use std::time::{SystemTime, Duration, UNIX_EPOCH};
+
 use crate::error::ContractError;
 use crate::msg::{ArithmeticTwapToNowRequest, CosmosQuery, ExecuteMsg, InstantiateMsg, InterchainQueryPacketData, ProtoCoin, QueryBalanceMsg, QueryMsg, QueryTwapMsg, Timestamp};
 use crate::state::{CHANNEL_INFO, ICQ_ERRORS, ICQ_PRICE_RESPONSES, ICQ_RESPONSES, LAST_SEQUENCE_ACKNOWLEDGMENT};
